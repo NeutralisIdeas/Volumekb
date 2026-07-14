@@ -14,7 +14,7 @@
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
 
-// Настройки по умолчанию
+// Default settings
 #define BAR_WIDTH 250
 #define BAR_HEIGHT 45
 int vol_step = 2;
@@ -32,7 +32,7 @@ pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 
 int epfd; 
 
-// Блокировка повторного запуска
+// Prevents multiple instances from running
 void check_single_instance() {
     char lock_path[256];
     snprintf(lock_path, sizeof(lock_path), "/tmp/volumekb_%d.lock", getuid());
@@ -46,7 +46,7 @@ void check_single_instance() {
     }
 }
 
-// Тихая установка автозапуска
+// Quiet autostart installation
 void ensure_autostart() {
     char config_dir[512];
     snprintf(config_dir, sizeof(config_dir), "%s/.config/autostart", getenv("HOME"));
@@ -74,7 +74,7 @@ void ensure_autostart() {
     }
 }
 
-// Потокобезопасное обновление данных о громкости
+// Thread-safe volume data update
 void update_volume(int trigger_show) {
     FILE *f = popen("wpctl get-volume @DEFAULT_AUDIO_SINK@", "r");
     if (f) {
@@ -84,7 +84,7 @@ void update_volume(int trigger_show) {
             int parsed = sscanf(buf, "Volume: %f", &v);
             int muted = (strstr(buf, "[MUTED]") != NULL);
             
-            // Синхронизируем переменные для графического потока
+            // Synchronize variables for the graphic thread
             pthread_mutex_lock(&lock);
             if (parsed == 1 && v >= 0.0f) {
                 target_vol = (int)(v * 100.0f);
@@ -124,7 +124,7 @@ void add_device_to_epoll(const char *path) {
     }
 }
 
-// Поток отрисовки X11
+// X11 rendering thread
 void* osd_thread(void* arg) {
     dpy = XOpenDisplay(NULL);
     if (!dpy) return NULL;
@@ -207,7 +207,7 @@ void* osd_thread(void* arg) {
     return NULL;
 }
 
-// Парсинг флагов запуска
+// Argument parsing
 void parse_args(int argc, char *argv[]) {
     struct option long_options[] = {
         {"step", required_argument, 0, 's'},
@@ -232,7 +232,7 @@ int main(int argc, char *argv[]) {
         if (daemon(0, 0) < 0) exit(1);
     }
 
-    // Первичное обновление звука без вызова OSD
+    // Initial volume update without triggering OSD
     update_volume(0);
     displayed_vol = target_vol;
     
@@ -263,7 +263,7 @@ int main(int argc, char *argv[]) {
     while (1) {
         int n = epoll_wait(epfd, events, 20, -1);
         for (int i = 0; i < n; i++) {
-            // Если подключили новую USB клавиатуру
+            // Handle new USB keyboard connection
             if (events[i].data.fd == inotify_fd) {
                 char buf[4096] __attribute__ ((aligned(__alignof__(struct inotify_event))));
                 ssize_t len;
@@ -274,13 +274,13 @@ int main(int argc, char *argv[]) {
                         if (event->mask & IN_CREATE) {
                             char path[512];
                             snprintf(path, sizeof(path), "/dev/input/%s", event->name);
-                            usleep(50000); // Ждем пока ядро выдаст права
+                            usleep(50000); // Wait for kernel to assign input group permissions
                             add_device_to_epoll(path);
                         }
                     }
                 }
             } else {
-                // БАТЧИНГ: Читаем все скопившиеся ивенты разом
+                // BATCHING: Read all pending events at once
                 int vol_delta = 0;
                 int mute_toggled = 0;
                 struct input_event ev;
@@ -293,7 +293,7 @@ int main(int argc, char *argv[]) {
                     }
                 }
                 
-                // Исполняем системные команды ТОЛЬКО один раз на весь пакет
+                // Execute system commands only once per batch
                 if (mute_toggled) {
                     toggle_mute();
                 }
